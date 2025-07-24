@@ -13,6 +13,8 @@ import time
 import json
 import gc
 import torch
+import re
+import copy
 from pathlib import Path
 from openai import OpenAI
 import soundfile as sf
@@ -44,43 +46,175 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
-st.markdown("""
-<style>
-    .main-header {
-        text-align: center;
-        padding: 1rem 0;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border-radius: 10px;
-        margin-bottom: 2rem;
+# Initialize dark mode state
+if 'dark_mode' not in st.session_state:
+    st.session_state.dark_mode = False
+
+# Multi-speaker system message (from examples/generation.py)
+MULTISPEAKER_DEFAULT_SYSTEM_MESSAGE = """You are an AI assistant designed to convert text into speech.
+If the user's message includes a [SPEAKER*] tag, do not read out the tag and generate speech for the following text, using the specified voice.
+If no speaker tag is present, select a suitable voice on your own."""
+
+def normalize_chinese_punctuation(text):
+    """Convert Chinese (full-width) punctuation marks to English (half-width) equivalents."""
+    chinese_to_english_punct = {
+        "，": ", ",  # comma
+        "。": ".",  # period
+        "：": ":",  # colon
+        "；": ";",  # semicolon
+        "？": "?",  # question mark
+        "！": "!",  # exclamation mark
+        "（": "(",  # left parenthesis
+        "）": ")",  # right parenthesis
+        "【": "[",  # left square bracket
+        "】": "]",  # right square bracket
+        "《": "<",  # left angle quote
+        "》": ">",  # right angle quote
+        """: '"',  # left double quotation
+        """: '"',  # right double quotation
+        "'": "'",  # left single quotation
+        "'": "'",  # right single quotation
+        "、": ",",  # enumeration comma
+        "—": "-",  # em dash
+        "…": "...",  # ellipsis
+        "·": ".",  # middle dot
+        "「": '"',  # left corner bracket
+        "」": '"',  # right corner bracket
+        "『": '"',  # left double corner bracket
+        "』": '"',  # right double corner bracket
     }
-    .metric-card {
-        background: #f0f2f6;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 0.5rem 0;
-    }
-    .parameter-section {
-        background: #ffffff;
-        padding: 1rem;
-        border-radius: 8px;
-        border: 1px solid #e0e0e0;
-        margin: 1rem 0;
-    }
-    .stButton > button {
-        width: 100%;
-        height: 3rem;
-        font-size: 1.1rem;
-        font-weight: bold;
-    }
-    .generation-status {
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
+    
+    for zh_punct, en_punct in chinese_to_english_punct.items():
+        text = text.replace(zh_punct, en_punct)
+    return text
+
+def normalize_transcript_text(text):
+    """Apply all text normalizations like in examples/generation.py"""
+    # Basic Chinese punctuation normalization
+    text = normalize_chinese_punctuation(text)
+    
+    # Other normalizations
+    text = text.replace("(", " ")
+    text = text.replace(")", " ")
+    text = text.replace("°F", " degrees Fahrenheit")
+    text = text.replace("°C", " degrees Celsius")
+    
+    # Sound effect tag replacements
+    for tag, replacement in [
+        ("[laugh]", "<SE>[Laughter]</SE>"),
+        ("[humming start]", "<SE>[Humming]</SE>"),
+        ("[humming end]", "<SE_e>[Humming]</SE_e>"),
+        ("[music start]", "<SE_s>[Music]</SE_s>"),
+        ("[music end]", "<SE_e>[Music]</SE_e>"),
+        ("[music]", "<SE>[Music]</SE>"),
+        ("[sing start]", "<SE_s>[Singing]</SE_s>"),
+        ("[sing end]", "<SE_e>[Singing]</SE_e>"),
+        ("[applause]", "<SE>[Applause]</SE>"),
+        ("[cheering]", "<SE>[Cheering]</SE>"),
+        ("[cough]", "<SE>[Cough]</SE>"),
+    ]:
+        text = text.replace(tag, replacement)
+    
+    # Line cleanup
+    lines = text.split("\n")
+    text = "\n".join([" ".join(line.split()) for line in lines if line.strip()])
+    text = text.strip()
+    
+    # Add final punctuation if missing
+    if not any([text.endswith(c) for c in [".", "!", "?", ",", ";", '"', "'", "</SE_e>", "</SE>"]]):
+        text += "."
+    
+    return text
+
+# Dynamic CSS based on dark mode state
+def get_css_theme():
+    if st.session_state.dark_mode:
+        return """
+        <style>
+            .main-header {
+                text-align: center;
+                padding: 1rem 0;
+                background: linear-gradient(90deg, #4a5568 0%, #2d3748 100%);
+                color: white;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+            }
+            .metric-card {
+                background: #2d3748;
+                padding: 1rem;
+                border-radius: 8px;
+                margin: 0.5rem 0;
+                color: white;
+            }
+            .parameter-section {
+                background: #2d3748;
+                padding: 1rem;
+                border-radius: 8px;
+                border: 1px solid #4a5568;
+                margin: 1rem 0;
+            }
+            .stButton > button {
+                width: 100%;
+                height: 3rem;
+                font-size: 1.1rem;
+                font-weight: bold;
+            }
+            .generation-status {
+                padding: 1rem;
+                border-radius: 8px;
+                margin: 1rem 0;
+                background: #2d3748;
+            }
+            /* Dark mode specific styling */
+            .stApp {
+                background-color: #1a202c;
+                color: #e2e8f0;
+            }
+            .stSidebar {
+                background-color: #2d3748;
+            }
+        </style>
+        """
+    else:
+        return """
+        <style>
+            .main-header {
+                text-align: center;
+                padding: 1rem 0;
+                background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border-radius: 10px;
+                margin-bottom: 2rem;
+            }
+            .metric-card {
+                background: #f0f2f6;
+                padding: 1rem;
+                border-radius: 8px;
+                margin: 0.5rem 0;
+            }
+            .parameter-section {
+                background: #ffffff;
+                padding: 1rem;
+                border-radius: 8px;
+                border: 1px solid #e0e0e0;
+                margin: 1rem 0;
+            }
+            .stButton > button {
+                width: 100%;
+                height: 3rem;
+                font-size: 1.1rem;
+                font-weight: bold;
+            }
+            .generation-status {
+                padding: 1rem;
+                border-radius: 8px;
+                margin: 1rem 0;
+            }
+        </style>
+        """
+
+# Apply CSS theme
+st.markdown(get_css_theme(), unsafe_allow_html=True)
 
 # Title and description
 st.markdown("""
@@ -103,6 +237,17 @@ if 'model_loaded' not in st.session_state:
 # Sidebar configuration
 with st.sidebar:
     st.header("🔧 Configuration")
+    
+    # Dark mode toggle
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.write("🌙 Dark Mode")
+    with col2:
+        if st.button("🔄", help="Toggle dark mode"):
+            st.session_state.dark_mode = not st.session_state.dark_mode
+            st.rerun()
+    
+    st.markdown("---")
     
     # Mode selection
     if LOCAL_MODE_AVAILABLE:
@@ -318,6 +463,16 @@ def create_parameter_section(tab_name: str):
                 chunk_max_words = st.number_input("Max Words/Chunk", 50, 500, 200, key=f"chunk_words_{tab_name}")
             else:
                 chunk_max_words = 200
+            
+            # RAS sampling parameters (from examples)
+            st.subheader("🎯 Advanced Sampling")
+            ras_win_len = st.number_input("RAS Window Length", 0, 20, 7, 
+                                        help="Window length for RAS sampling (0 to disable)", key=f"ras_win_{tab_name}")
+            if ras_win_len > 0:
+                ras_win_max_repeat = st.number_input("RAS Max Repeats", 1, 5, 2, 
+                                                   help="Max times to repeat RAS window", key=f"ras_repeat_{tab_name}")
+            else:
+                ras_win_max_repeat = 2
         
         return {
             "temperature": temperature,
@@ -326,7 +481,9 @@ def create_parameter_section(tab_name: str):
             "scene_prompt": scene_prompt,
             "seed": seed,
             "chunk_method": chunk_method,
-            "chunk_max_words": chunk_max_words
+            "chunk_max_words": chunk_max_words,
+            "ras_win_len": ras_win_len if ras_win_len > 0 else None,
+            "ras_win_max_repeat": ras_win_max_repeat
         }
 
 def generate_audio_local(text_input: str, params: Dict, ref_audio: str = None):
@@ -339,24 +496,31 @@ def generate_audio_local(text_input: str, params: Dict, ref_audio: str = None):
         with st.spinner("🎵 Generating audio locally..."):
             start_time = time.time()
             
-            # Prepare generation context
+            # Apply text normalization like in examples
+            normalized_text = normalize_transcript_text(text_input)
+            
+            # Extract speaker tags like in examples/generation.py
+            pattern = re.compile(r"\[(SPEAKER\d+)\]")
+            speaker_tags = sorted(set(pattern.findall(normalized_text)))
+            
+            # Prepare generation context with proper speaker tags
             messages, audio_ids = prepare_generation_context(
                 scene_prompt=params.get("scene_prompt", "Audio is recorded from a quiet room."),
                 ref_audio=ref_audio,
                 ref_audio_in_system_message=False,
                 audio_tokenizer=st.session_state.model_client._audio_tokenizer,
-                speaker_tags=[]
+                speaker_tags=speaker_tags  # Now passing the extracted speaker tags!
             )
             
             # Prepare chunked text
             chunked_text = prepare_chunk_text(
-                text_input,
+                normalized_text,  # Use normalized text
                 chunk_method=params.get("chunk_method"),
                 chunk_max_word_num=params.get("chunk_max_words", 200),
                 chunk_max_num_turns=1
             )
             
-            # Generate audio
+            # Generate audio with RAS parameters
             concat_wv, sr, text_output = st.session_state.model_client.generate(
                 messages=messages,
                 audio_ids=audio_ids,
@@ -365,6 +529,8 @@ def generate_audio_local(text_input: str, params: Dict, ref_audio: str = None):
                 temperature=params.get("temperature", 0.7),
                 top_k=params.get("top_k", 50),
                 top_p=params.get("top_p", 0.95),
+                ras_win_len=params.get("ras_win_len", 7),
+                ras_win_max_num_repeat=params.get("ras_win_max_repeat", 2),
                 seed=params.get("seed", 42) if params.get("seed", 42) > 0 else None,
             )
             
@@ -635,7 +801,13 @@ with tab2:
 # Tab 3: Multi-Speaker Generation
 with tab3:
     st.header("🎭 Multi-Speaker Generation")
-    st.markdown("Generate conversations with multiple speakers using [SPEAKER0], [SPEAKER1] tags.")
+    st.markdown("""
+    Generate conversations with multiple speakers using [SPEAKER0], [SPEAKER1] tags.
+    
+    **🎵 Sound Effects Support:** Use tags like [laugh], [music], [applause], [cough] for realistic audio effects.
+    **🌡️ Temperature Support:** °F and °C are automatically converted to spoken form.
+    **🌍 Multi-language:** Chinese punctuation is automatically normalized.
+    """)
     
     params = create_parameter_section("Multi-Speaker")
     
@@ -657,18 +829,18 @@ with tab3:
                 key=f"voice_speaker_{i}"
             )
     
-    # Sample transcript
-    sample_transcript = """[SPEAKER0] I can't believe you forgot our anniversary again!
+    # Sample transcript with enhanced features
+    sample_transcript = """[SPEAKER0] I can't believe you forgot our anniversary again! [cough]
 
-[SPEAKER1] I'm sorry, honey. I've been so swamped with work lately.
+[SPEAKER1] I'm sorry, honey. I've been so swamped with work lately. The office was 85°F today and the air conditioning broke.
 
-[SPEAKER0] That's what you said last year! And the year before that!
+[SPEAKER0] That's what you said last year! And the year before that! [laugh] At least I find it amusing now.
 
 [SPEAKER1] You're right, I have no excuse. How can I make it up to you?
 
-[SPEAKER0] Well, you could start by taking me to that new restaurant downtown.
+[SPEAKER0] Well, you could start by taking me to that new restaurant downtown. The one with live [music] every Friday night.
 
-[SPEAKER1] Consider it done. I'll make a reservation right now."""
+[SPEAKER1] Consider it done. I'll make a reservation right now. [applause] You deserve the best!"""
     
     transcript_input = st.text_area(
         "Enter multi-speaker dialogue (use [SPEAKER0], [SPEAKER1] tags):",
