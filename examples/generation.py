@@ -24,7 +24,7 @@ from boson_multimodal.dataset.chatml_dataset import (
 )
 from boson_multimodal.model.higgs_audio.utils import revert_delay_pattern
 from typing import List
-from transformers import AutoConfig, AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer, BitsAndBytesConfig
 from transformers.cache_utils import StaticCache
 from typing import Optional
 from dataclasses import asdict
@@ -184,6 +184,8 @@ class HiggsAudioModelClient:
         max_new_tokens=2048,
         kv_cache_lengths: List[int] = [1024, 4096, 8192],  # Multiple KV cache sizes,
         use_static_kv_cache=False,
+        use_quantization=True,
+        quantization_bits=4,  # 4 or 8 bit quantization
     ):
         if device_id is None:
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -194,11 +196,64 @@ class HiggsAudioModelClient:
             if isinstance(audio_tokenizer, str)
             else audio_tokenizer
         )
-        self._model = HiggsAudioModel.from_pretrained(
-            model_path,
-            device_map=self._device,
-            torch_dtype=torch.bfloat16,
-        )
+        if use_quantization and self._device != "cpu":
+            try:
+                if quantization_bits == 8:
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_8bit=True,
+                        bnb_8bit_compute_dtype=torch.bfloat16,
+                    )
+                    logger.info("Using 8-bit quantization")
+                elif quantization_bits == 4:
+                    quantization_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_compute_dtype=torch.bfloat16,
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_quant_type="nf4"
+                    )
+                    logger.info("Using 4-bit quantization")
+                else:
+                    raise ValueError(f"Unsupported quantization bits: {quantization_bits}. Use 4 or 8.")
+                
+                self._model = HiggsAudioModel.from_pretrained(
+                    model_path,
+                    device_map=self._device,
+                    torch_dtype=torch.bfloat16,
+                    quantization_config=quantization_config,
+                )
+                logger.info(f"Loaded model with {quantization_bits}-bit quantization")
+            except (ImportError, Exception) as e:
+                # Fall back to non-quantized model if bitsandbytes is not available or quantization fails
+                logger.warning(f"Quantization failed ({e}), falling back to non-quantized model")
+                if self._device == "cpu":
+                    self._model = HiggsAudioModel.from_pretrained(
+                        model_path,
+                        torch_dtype=torch.float32,  # Use float32 for CPU
+                        device_map="cpu",  # Explicitly set to CPU
+                    )
+                else:
+                    self._model = HiggsAudioModel.from_pretrained(
+                        model_path,
+                        device_map=self._device,
+                        torch_dtype=torch.bfloat16,
+                    )
+        else:
+            # Load without quantization
+            if self._device == "cpu":
+                # Force CPU-only loading to avoid CUDA memory issues
+                self._model = HiggsAudioModel.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.float32,  # Use float32 for CPU
+                    device_map="cpu",  # Explicitly set to CPU
+                )
+                logger.info("Loaded model on CPU with float32 precision")
+            else:
+                self._model = HiggsAudioModel.from_pretrained(
+                    model_path,
+                    device_map=self._device,
+                    torch_dtype=torch.bfloat16,
+                )
+                logger.info("Loaded model without quantization")
         self._model.eval()
         self._kv_cache_lengths = kv_cache_lengths
         self._use_static_kv_cache = use_static_kv_cache
