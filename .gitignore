@@ -201,4 +201,5 @@ result/
 .ruff_cache/
 
 # Vibes
+.claude
 CLAUDE.md

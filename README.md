@@ -1,21 +1,21 @@
-<h1 align="center">⚡ Faster Higgs: Local Quantized Audio Generation</h1>
+<h1 align="center">Faster Higgs: Local Quantized Audio Generation</h1>
 
 <div align="center" style="display: flex; justify-content: center; margin-top: 10px;">
-  <a href="#-instant-setup"><img src='https://img.shields.io/badge/⚡-30 Second Setup-FFD700' style="margin-right: 5px;"></a>
-  <a href="#-quantized-inference"><img src="https://img.shields.io/badge/🔧-4bit/8bit Quantization-32CD32" style="margin-right: 5px;"></a>
-  <a href="#-server-mode"><img src="https://img.shields.io/badge/🌐-Local Server + Web UI-4169E1" style="margin-right: 5px;"></a>
-  <a href="https://huggingface.co/bosonai/higgs-audio-v2-generation-3B-base"><img src="https://img.shields.io/badge/🤗-Original Model-ED5A22.svg" style="margin-right: 5px;"></a>
+  <a href="#instant-setup"><img src='https://img.shields.io/badge/30 Second Setup-FFD700' style="margin-right: 5px;"></a>
+  <a href="#quantized-inference"><img src="https://img.shields.io/badge/4bit/8bit Quantization-32CD32" style="margin-right: 5px;"></a>
+  <a href="#server-mode"><img src="https://img.shields.io/badge/Local Server + Web UI-4169E1" style="margin-right: 5px;"></a>
+  <a href="https://huggingface.co/bosonai/higgs-audio-v2-generation-3B-base"><img src="https://img.shields.io/badge/Original Model-ED5A22.svg" style="margin-right: 5px;"></a>
 </div>
 
 
 **Faster Higgs** optimizes the powerful Higgs Audio v2 model for local deployment with aggressive quantization, making high-quality voice generation accessible on consumer GPUs. Run the full model (3.6B + 2.2B params) on **8GB VRAM** or even **CPU-only** systems.
 
-🎯 **What's New:**
-- ⚡ **4-bit & 8-bit quantization** - Run on 8GB GPUs
-- 🖥️ **CPU fallback** - Works without any GPU
-- 🌐 **Local server mode** - OpenAI-compatible API + web interface
-- 📦 **30-second setup** - One command to start generating
-- 🔧 **Smart device detection** - Automatically optimizes for your hardware
+**What's New:**
+- **4-bit & 8-bit quantization** - Run on 8GB GPUs
+- **CPU fallback** - Works without any GPU
+- **Local server mode** - OpenAI-compatible API + web interface
+- **30-second setup** - One command to start generating
+- **Smart device detection** - Automatically optimizes for your hardware
 
 <p align="center">
     <img src="https://img.shields.io/badge/GPU-8GB_VRAM-green?style=for-the-badge" alt="8GB VRAM">
@@ -24,12 +24,12 @@
 </p>
 
 **Hardware Requirements:**
-- 🟢 **Optimal:** GPU with 12GB+ VRAM (no quantization needed)
-- 🟡 **Good:** GPU with 8GB VRAM (8-bit quantization)
-- 🟠 **Works:** GPU with 6-8GB VRAM (4-bit quantization)
-- 🔵 **Fallback:** CPU-only (slower but universal)
+- **Optimal:** GPU with 12GB+ VRAM (no quantization needed)
+- **Good:** GPU with 8GB VRAM (8-bit quantization)
+- **Works:** GPU with 6-8GB VRAM (4-bit quantization)
+- **Fallback:** CPU-only (slower but universal)
 
-## ⚡ Instant Setup
+## Instant Setup
 
 Get Higgs Audio running with quantization in 30 seconds:
 
@@ -46,7 +46,7 @@ uv pip install -r requirements.txt -e . bitsandbytes
 ./run_tts.sh "Hello world, this is Faster Higgs!"
 ```
 
-## 🔧 Quantized Inference
+## Quantized Inference
 
 **Automatically optimized for your hardware:**
 
@@ -67,21 +67,21 @@ uv pip install -r requirements.txt -e . bitsandbytes
 ./run_tts.sh "Clone this voice efficiently" --ref_audio belinda --quantization_bits 8
 ```
 
-### 📊 Performance & Memory
+### Performance & Memory
 
 | Hardware      | Mode            | Memory         | Speed | Quality |
 | ------------- | --------------- | -------------- | ----- | ------- |
-| **12GB+ GPU** | No quantization | idk haha       | ?     | 🌟🌟🌟     |
-| **8GB GPU**   | 8-bit quantized | ~7GB           | ⚡     | 🌟🌟      |
-| **6GB GPU**   | 4-bit quantized | ~5GB           | ⚡⚡    | 🌟       |
-| **CPU Only**  | Any mode        | ~21GB RAM Smth | 🐌     | 🌟       |
+| **12GB+ GPU** | No quantization | idk haha       | ?        | Excellent |
+| **8GB GPU**   | 8-bit quantized | ~7GB           | Fast     | Good      |
+| **6GB GPU**   | 4-bit quantized | ~5GB           | Very Fast| Fair      |
+| **CPU Only**  | Any mode        | ~21GB RAM Smth | Slow     | Fair      |
 
 **Real Performance:**
 - **8-bit quantized:** ~4-6 seconds per sentence (8GB GPU) (sweet)
 - **4-bit quantized:** ~3-5 seconds per sentence (6GB GPU) (not the best in it's current state)
 - **CPU mode:** ~60+ seconds per sentence (universal)
 
-## 🌐 Server Mode
+## Server Mode
 
 **Deploy with OpenAI-compatible API + Web Interface:**
 
@@ -90,21 +90,21 @@ uv pip install -r requirements.txt -e . bitsandbytes
 ./run_server.sh
 
 # Access at:
-# 🌐 Web Interface: http://localhost:8501
-# 📡 API Server: http://localhost:8000
+# Web Interface: http://localhost:8501
+# API Server: http://localhost:8000
 ```
 
 **Features:**
-- 🎨 **Streamlit Web UI** - Easy point-and-click interface
-- 📡 **OpenAI API Compatible** - Drop-in replacement for OpenAI TTS
-- 🎭 **Voice Cloning Interface** - Upload audio, get cloned voice
-- 👥 **Multi-Speaker Generation** - Generate conversations
-- 🔧 **Auto-quantization** - Optimizes for your hardware
-- 🌐 **Network Access** - Use from other devices on your network
+- **Streamlit Web UI** - Easy point-and-click interface
+- **OpenAI API Compatible** - Drop-in replacement for OpenAI TTS
+- **Voice Cloning Interface** - Upload audio, get cloned voice
+- **Multi-Speaker Generation** - Generate conversations
+- **Auto-quantization** - Optimizes for your hardware
+- **Network Access** - Use from other devices on your network
 
 ---
 
-## 🐳 Docker Option (Optional)
+## Docker Option (Optional)
 
 For isolated environments, use NVIDIA containers:
 
@@ -118,10 +118,10 @@ uv pip install -r requirements.txt -e . bitsandbytes
 ./run_tts.sh "Docker deployment works too!"
 ```
 
-## 📦 Alternative Install Methods
+## Alternative Install Methods
 
 <details>
-<summary>🔽 Click to expand alternative installation options</summary>
+<summary>Click to expand alternative installation options</summary>
 
 ### Using conda
 ```bash
@@ -160,7 +160,7 @@ conda remove -y --prefix ./conda_env --all
 
 </details>
 
-## 🚀 Usage
+## Usage
 
 > [!TIP]
 > **Use `./run_tts.sh` for instant speech generation!** Automatically detects your hardware and applies optimal quantization. Works on 6GB GPUs or CPU-only.
@@ -238,7 +238,7 @@ Example output:
 Sample rate: 24000 Hz
 Duration: 3.24 seconds
 Audio validation: RMS=0.127, Non-silent samples: 71645/77760 (92.1%)
-🎵 Audio validation passed - real speech content detected
+Audio validation passed - real speech content detected
 ```
 
 #### Device and Memory Management
