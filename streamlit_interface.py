@@ -21,6 +21,13 @@ import soundfile as sf
 import numpy as np
 from typing import Optional, Dict, List
 from loguru import logger
+try:
+    from scipy import signal
+    from scipy.ndimage import binary_dilation
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    logger.warning("scipy not available, using numpy-only audio processing")
 
 # Add project root to path
 project_root = Path(__file__).parent
@@ -125,6 +132,157 @@ def normalize_transcript_text(text):
         text += "."
     
     return text
+
+def remove_long_pauses(audio_data: np.ndarray, sample_rate: int, 
+                      silence_threshold: float = 0.01, 
+                      max_pause_duration: float = 1.0,
+                      fade_duration: float = 0.05) -> np.ndarray:
+    """
+    Remove long pauses from audio while preserving natural speech rhythm.
+    
+    Args:
+        audio_data: Audio signal as numpy array
+        sample_rate: Sample rate of the audio
+        silence_threshold: RMS threshold for silence detection (0.01 = -40dB relative)
+        max_pause_duration: Maximum allowed pause duration in seconds
+        fade_duration: Duration of fade in/out when cutting pauses
+    
+    Returns:
+        Processed audio with reduced pauses
+    """
+    if len(audio_data.shape) > 1:
+        # Convert stereo to mono if needed
+        audio_data = np.mean(audio_data, axis=1)
+    
+    # Parameters
+    frame_length = int(0.025 * sample_rate)  # 25ms frames
+    hop_length = int(0.010 * sample_rate)   # 10ms hop
+    max_pause_samples = int(max_pause_duration * sample_rate)
+    fade_samples = int(fade_duration * sample_rate)
+    
+    # Calculate RMS energy for each frame
+    num_frames = (len(audio_data) - frame_length) // hop_length + 1
+    rms_values = np.zeros(num_frames)
+    
+    for i in range(num_frames):
+        start = i * hop_length
+        end = start + frame_length
+        frame = audio_data[start:end]
+        rms_values[i] = np.sqrt(np.mean(frame**2))
+    
+    # Detect silence frames
+    silence_frames = rms_values < silence_threshold
+    
+    # Dilate silence regions to avoid cutting too aggressively
+    kernel_size = max(3, int(0.1 * sample_rate / hop_length))  # 100ms dilation
+    if SCIPY_AVAILABLE:
+        silence_frames = binary_dilation(silence_frames, iterations=kernel_size//2)
+    else:
+        # Numpy-only dilation using convolution
+        kernel = np.ones(kernel_size, dtype=bool)
+        silence_frames = np.convolve(silence_frames.astype(int), kernel, mode='same') > 0
+    
+    # Find continuous silence regions
+    silence_regions = []
+    in_silence = False
+    silence_start = 0
+    
+    for i, is_silent in enumerate(silence_frames):
+        if is_silent and not in_silence:
+            silence_start = i
+            in_silence = True
+        elif not is_silent and in_silence:
+            silence_end = i
+            silence_duration = (silence_end - silence_start) * hop_length
+            if silence_duration > max_pause_samples:
+                # Convert frame indices to sample indices
+                start_sample = silence_start * hop_length
+                end_sample = silence_end * hop_length
+                # Keep only max_pause_duration worth of silence
+                keep_samples = max_pause_samples
+                remove_start = start_sample + keep_samples // 2
+                remove_end = end_sample - keep_samples // 2
+                silence_regions.append((remove_start, remove_end))
+            in_silence = False
+    
+    # Handle silence at the end
+    if in_silence:
+        silence_end = len(silence_frames)
+        silence_duration = (silence_end - silence_start) * hop_length
+        if silence_duration > max_pause_samples:
+            start_sample = silence_start * hop_length
+            end_sample = min(len(audio_data), silence_end * hop_length)
+            keep_samples = max_pause_samples
+            remove_start = start_sample + keep_samples // 2
+            remove_end = end_sample - keep_samples // 2
+            silence_regions.append((remove_start, remove_end))
+    
+    # Remove long pauses (work backwards to maintain indices)
+    processed_audio = audio_data.copy()
+    for remove_start, remove_end in reversed(silence_regions):
+        if remove_end > remove_start and remove_start >= 0 and remove_end <= len(processed_audio):
+            # Apply fade out before cut
+            fade_start = max(0, remove_start - fade_samples)
+            if fade_start < remove_start:
+                fade_length = remove_start - fade_start
+                fade_out = np.linspace(1, 0, fade_length)
+                processed_audio[fade_start:remove_start] *= fade_out
+            
+            # Apply fade in after cut
+            fade_end = min(len(processed_audio), remove_end + fade_samples)
+            if remove_end < fade_end:
+                fade_length = fade_end - remove_end
+                fade_in = np.linspace(0, 1, fade_length)
+                processed_audio[remove_end:fade_end] *= fade_in
+            
+            # Remove the silence region
+            processed_audio = np.concatenate([
+                processed_audio[:remove_start],
+                processed_audio[remove_end:]
+            ])
+    
+    return processed_audio
+
+def apply_audio_postprocessing(audio_bytes: bytes, 
+                             silence_threshold: float = 0.01,
+                             max_pause_duration: float = 1.0,
+                             fade_duration: float = 0.05) -> bytes:
+    """
+    Apply post-processing to remove long pauses and clean up audio.
+    
+    Args:
+        audio_bytes: Input audio as bytes
+        silence_threshold: RMS threshold for silence detection
+        max_pause_duration: Maximum allowed pause in seconds
+        fade_duration: Fade duration for smooth cuts
+    
+    Returns:
+        Processed audio as bytes
+    """
+    try:
+        # Load audio
+        buffer = io.BytesIO(audio_bytes)
+        audio_data, sample_rate = sf.read(buffer)
+        
+        # Apply pause removal
+        processed_audio = remove_long_pauses(
+            audio_data, sample_rate, 
+            silence_threshold, max_pause_duration, fade_duration
+        )
+        
+        # Normalize audio to prevent clipping
+        max_val = np.max(np.abs(processed_audio))
+        if max_val > 0:
+            processed_audio = processed_audio * (0.95 / max_val)
+        
+        # Convert back to bytes
+        output_buffer = io.BytesIO()
+        sf.write(output_buffer, processed_audio, sample_rate, format='WAV')
+        return output_buffer.getvalue()
+        
+    except Exception as e:
+        logger.error(f"Audio post-processing failed: {e}")
+        return audio_bytes  # Return original if processing fails
 
 # Dynamic CSS based on dark mode state
 def get_css_theme():
@@ -321,8 +479,11 @@ with st.sidebar:
         use_static_kv_cache = st.checkbox(
             "Static KV Cache",
             value=False,
-            help="Faster generation but uses more memory"
+            help="Faster generation but uses more memory. Disable for multi-speaker if getting OOM."
         )
+        
+        if use_static_kv_cache:
+            st.warning("⚠️ Static KV Cache uses significant memory. Disable if you get CUDA OOM errors.")
         
         max_new_tokens = st.number_input(
             "Max New Tokens",
@@ -464,6 +625,23 @@ def create_parameter_section(tab_name: str):
             else:
                 chunk_max_words = 200
             
+            # Memory Management
+            st.subheader("🧠 Memory Management")
+            chunk_buffer_size = st.number_input("Chunk Buffer Size", 0, 10, 0, 
+                                              help="Limit chunks in memory (0=auto, good for long multi-speaker)", key=f"chunk_buffer_{tab_name}")
+            if chunk_buffer_size == 0:
+                chunk_buffer_size = None
+            
+            # Memory usage info
+            if torch.cuda.is_available():
+                try:
+                    gpu_memory = torch.cuda.get_device_properties(0).total_memory
+                    gpu_memory_gb = gpu_memory / (1024**3)
+                    allocated = torch.cuda.memory_allocated(0) / (1024**3)
+                    st.info(f"📊 GPU: {allocated:.1f}GB / {gpu_memory_gb:.1f}GB used")
+                except:
+                    pass
+            
             # RAS sampling parameters (from examples)
             st.subheader("🎯 Advanced Sampling")
             ras_win_len = st.number_input("RAS Window Length", 0, 20, 7, 
@@ -482,6 +660,7 @@ def create_parameter_section(tab_name: str):
             "seed": seed,
             "chunk_method": chunk_method,
             "chunk_max_words": chunk_max_words,
+            "chunk_buffer_size": chunk_buffer_size,
             "ras_win_len": ras_win_len if ras_win_len > 0 else None,
             "ras_win_max_repeat": ras_win_max_repeat
         }
@@ -520,12 +699,26 @@ def generate_audio_local(text_input: str, params: Dict, ref_audio: str = None):
                 chunk_max_num_turns=1
             )
             
-            # Generate audio with RAS parameters
+            # Clear CUDA cache before generation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                gc.collect()
+            
+            # Memory optimization: Use chunk buffer size for multi-speaker
+            chunk_buffer_size = params.get("chunk_buffer_size")
+            if chunk_buffer_size is None:
+                # Auto-determine based on number of chunks and available memory
+                num_chunks = len(chunked_text)
+                if num_chunks > 4:  # For long multi-speaker content
+                    chunk_buffer_size = min(3, num_chunks // 2)
+                    logger.info(f"Using chunk buffer size: {chunk_buffer_size} for {num_chunks} chunks")
+            
+            # Generate audio with RAS parameters and memory optimization
             concat_wv, sr, text_output = st.session_state.model_client.generate(
                 messages=messages,
                 audio_ids=audio_ids,
                 chunked_text=chunked_text,
-                generation_chunk_buffer_size=None,
+                generation_chunk_buffer_size=chunk_buffer_size,
                 temperature=params.get("temperature", 0.7),
                 top_k=params.get("top_k", 50),
                 top_p=params.get("top_p", 0.95),
@@ -536,6 +729,11 @@ def generate_audio_local(text_input: str, params: Dict, ref_audio: str = None):
             
             generation_time = time.time() - start_time
             
+            # Clear CUDA cache after generation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                gc.collect()
+            
             # Save to memory buffer
             buffer = io.BytesIO()
             sf.write(buffer, concat_wv, sr, format='WAV')
@@ -544,7 +742,33 @@ def generate_audio_local(text_input: str, params: Dict, ref_audio: str = None):
             return audio_bytes, text_output, generation_time
             
     except Exception as e:
-        st.error(f"❌ Local generation failed: {str(e)}")
+        error_msg = str(e)
+        if "CUDA out of memory" in error_msg:
+            st.error(f"❌ CUDA out of memory. Try reducing chunk size or enabling chunk buffer limit.")
+            st.info("💡 **Memory Optimization Tips:**\n"
+                   "- Set 'Chunk Buffer Size' to 2-3 for long multi-speaker content\n"
+                   "- Use 'speaker' chunk method for multi-speaker dialogues\n"
+                   "- Reduce 'Max New Tokens' to 1024 or lower\n"
+                   "- Disable 'Static KV Cache' checkbox\n"
+                   "- Try 4-bit quantization if using 8-bit\n"
+                   "- Reduce chunk max words to 100-150")
+            
+            # Show current memory usage if available
+            if torch.cuda.is_available():
+                try:
+                    allocated = torch.cuda.memory_allocated(0) / (1024**3)
+                    cached = torch.cuda.memory_reserved(0) / (1024**3)
+                    st.error(f"📊 Memory: {allocated:.1f}GB allocated, {cached:.1f}GB cached")
+                except:
+                    pass
+        else:
+            st.error(f"❌ Local generation failed: {error_msg}")
+        
+        # Clear memory on error
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+        
         return None, None, None
 
 def generate_audio_api(messages: List[Dict], params: Dict):
@@ -635,10 +859,70 @@ def display_generation_result(audio_bytes, text_output, gen_time, params, input_
         # Audio player
         st.audio(audio_bytes, format="audio/wav")
         
-        # Download button
+        # Post-processing section
+        st.subheader("🎧 Audio Post-Processing")
+        col_pp1, col_pp2, col_pp3 = st.columns(3)
+        
+        with col_pp1:
+            silence_thresh = st.slider("Silence Threshold", 0.001, 0.1, 0.01, 
+                                     help="Lower = more aggressive pause removal", format="%.3f")
+        with col_pp2:
+            max_pause = st.slider("Max Pause Duration", 0.2, 3.0, 1.0, step=0.1, 
+                                help="Maximum allowed pause in seconds")
+        with col_pp3:
+            fade_duration = st.slider("Fade Duration", 0.01, 0.2, 0.05, step=0.01,
+                                    help="Fade duration for smooth cuts")
+        
+        # Post-processing button
+        if st.button("🎧 Remove Long Pauses", help="Process audio to remove long pauses and empty sounds"):
+            with st.spinner("🎧 Processing audio..."):
+                try:
+                    start_time = time.time()
+                    processed_audio = apply_audio_postprocessing(
+                        audio_bytes, 
+                        silence_threshold=silence_thresh,
+                        max_pause_duration=max_pause,
+                        fade_duration=fade_duration
+                    )
+                    processing_time = time.time() - start_time
+                    st.success(f"✅ Audio processed in {processing_time:.2f}s")
+                    
+                    # Validate processed audio
+                    processed_validation = validate_audio(processed_audio)
+                    original_duration = validation.get('duration', 0)
+                    processed_duration = processed_validation.get('duration', 0)
+                    time_saved = original_duration - processed_duration
+                    
+                    # Show comparison
+                    col_comp1, col_comp2, col_comp3 = st.columns(3)
+                    with col_comp1:
+                        st.metric("⏱️ Original Duration", f"{original_duration:.2f}s")
+                    with col_comp2:
+                        st.metric("⏰ Processed Duration", f"{processed_duration:.2f}s")
+                    with col_comp3:
+                        st.metric("💾 Time Saved", f"{time_saved:.2f}s")
+                    
+                    # Play processed audio
+                    st.subheader("🎧 Processed Audio")
+                    st.audio(processed_audio, format="audio/wav")
+                    
+                    # Download processed audio
+                    processed_filename = f"processed_higgs_audio_{int(time.time())}.wav"
+                    st.download_button(
+                        label="📥 Download Processed Audio",
+                        data=processed_audio,
+                        file_name=processed_filename,
+                        mime="audio/wav",
+                        type="primary"
+                    )
+                    
+                except Exception as e:
+                    st.error(f"❌ Post-processing failed: {str(e)}")
+        
+        # Original download button
         filename = f"higgs_audio_{int(time.time())}.wav"
         st.download_button(
-            label="📥 Download Audio",
+            label="📥 Download Original Audio",
             data=audio_bytes,
             file_name=filename,
             mime="audio/wav"
