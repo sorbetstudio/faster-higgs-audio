@@ -24,7 +24,7 @@ We aim to push this bitrate as low as possible without hurting audio fidelity.
 
 ## Data and Evaluation Metrics
 
-We test on four subsets:
+We test on four subsets, available [here](https://huggingface.co/datasets/bosonai/AudioTokenBench):
 
 - **Speech, Music, Sound Event**: Includes 1,000 clips for each category, with each clip lasting 10 seconds.   Clips are randomly sampled from [DAPS](https://ccrma.stanford.edu/~gautham/Site/daps.html) (Speech), [MUSDB](https://sigsep.github.io/datasets/musdb.html) (Music), and [AudioSet](https://research.google.com/audioset/index.html) (Sound Event).
 

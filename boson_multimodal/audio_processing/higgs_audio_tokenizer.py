@@ -294,6 +294,8 @@ class HiggsAudioTokenizer(nn.Module):
         return EncodedResult(codes)
 
     def decode(self, vq_code: torch.Tensor) -> torch.Tensor:
+        vq_code = vq_code.to(self.device)
+
         if self.quantizer_type == "RVQ":
             vq_code = vq_code.permute(1, 0, 2)
             quantized = self.quantizer.decode(vq_code)
@@ -304,7 +306,7 @@ class HiggsAudioTokenizer(nn.Module):
         quantized_acoustic = self.fc_post2(quantized).transpose(1, 2)
 
         o = self.decoder_2(quantized_acoustic)
-        return o.cpu().numpy()
+        return o.detach().cpu().numpy()
 
 
 def load_higgs_audio_tokenizer(tokenizer_name_or_path, device="cuda"):

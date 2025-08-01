@@ -44,7 +44,10 @@ def run_smart_voice() -> None:
         ],
         model=model,
         modalities=["text", "audio"],
-        audio={"format": "wav"},
+        temperature=1.0,
+        top_p=0.95,
+        extra_body={"top_k": 50},
+        stop=["<|eot_id|>", "<|end_of_text|>", "<|audio_eos|>"],
     )
 
     text = chat_completion.choices[0].message.content

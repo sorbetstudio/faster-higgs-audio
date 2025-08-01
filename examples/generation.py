@@ -180,6 +180,7 @@ class HiggsAudioModelClient:
         self,
         model_path,
         audio_tokenizer,
+        device=None,
         device_id=None,
         max_new_tokens=2048,
         kv_cache_lengths: List[int] = [1024, 4096, 8192],  # Multiple KV cache sizes,
@@ -187,16 +188,29 @@ class HiggsAudioModelClient:
         use_quantization=True,
         quantization_bits=4,  # 4 or 8 bit quantization
     ):
-        if device_id is None:
-            self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
+        # Use explicit device if provided, otherwise try CUDA/MPS/CPU
+        if device_id is not None:
             self._device = f"cuda:{device_id}"
-        self._audio_tokenizer = (
-            load_higgs_audio_tokenizer(audio_tokenizer, device=self._device)
-            if isinstance(audio_tokenizer, str)
-            else audio_tokenizer
-        )
-        if use_quantization and self._device != "cpu":
+        elif device is not None:
+            self._device = device
+        else:  # We get to choose the device
+            # Prefer CUDA over MPS (Apple Silicon GPU) over CPU if available
+            if torch.cuda.is_available():
+                self._device = "cuda:0"
+            elif torch.backends.mps.is_available():
+                self._device = "mps"
+            else:
+                self._device = "cpu"
+
+        logger.info(f"Using device: {self._device}")
+        if isinstance(audio_tokenizer, str):
+            # For MPS, use CPU due to embedding operation limitations in quantization layers
+            audio_tokenizer_device = "cpu" if self._device == "mps" else self._device
+            self._audio_tokenizer = load_higgs_audio_tokenizer(audio_tokenizer, device=audio_tokenizer_device)
+        else:
+            self._audio_tokenizer = audio_tokenizer
+
+        if use_quantization and self._device != "cpu" and self._device != "mps":
             try:
                 if quantization_bits == 8:
                     quantization_config = BitsAndBytesConfig(
@@ -411,7 +425,14 @@ class HiggsAudioModelClient:
         logger.info(f"========= Final Text output =========")
         logger.info(self._tokenizer.decode(outputs[0][0]))
         concat_audio_out_ids = torch.concat(audio_out_ids_l, dim=1)
-        concat_wv = self._audio_tokenizer.decode(concat_audio_out_ids.unsqueeze(0))[0, 0]
+
+        # Fix MPS compatibility: detach and move to CPU before decoding
+        if concat_audio_out_ids.device.type in ["mps", "cuda"]:
+            concat_audio_out_ids_cpu = concat_audio_out_ids.detach().cpu()
+        else:
+            concat_audio_out_ids_cpu = concat_audio_out_ids
+
+        concat_wv = self._audio_tokenizer.decode(concat_audio_out_ids_cpu.unsqueeze(0))[0, 0]
         text_result = self._tokenizer.decode(outputs[0][0])
         return concat_wv, sr, text_result
 
@@ -648,6 +669,12 @@ def prepare_generation_context(scene_prompt, ref_audio, ref_audio_in_system_mess
     default=1,
     help="Whether to use static KV cache for faster generation. Only works when using GPU.",
 )
+@click.option(
+    "--device",
+    type=click.Choice(["auto", "cuda", "mps", "none"]),
+    default="auto",
+    help="Device to use: 'auto' (pick best available), 'cuda', 'mps', or 'none' (CPU only).",
+)
 def main(
     model_path,
     audio_tokenizer,
@@ -669,25 +696,47 @@ def main(
     device_id,
     out_path,
     use_static_kv_cache,
+    device,
 ):
+    # specifying a device_id implies CUDA
     if device_id is None:
-        if torch.cuda.is_available():
+        if device == "auto":
+            if torch.cuda.is_available():
+                device_id = 0
+                device = "cuda:0"
+            elif torch.backends.mps.is_available():
+                device_id = None  # MPS doesn't use device IDs like CUDA
+                device = "mps"
+            else:
+                device_id = None
+                device = "cpu"
+        elif device == "cuda":
             device_id = 0
             device = "cuda:0"
+        elif device == "mps":
+            device_id = None
+            device = "mps"
         else:
             device_id = None
             device = "cpu"
     else:
         device = f"cuda:{device_id}"
-    audio_tokenizer = load_higgs_audio_tokenizer(audio_tokenizer, device=device)
+    # For MPS, use CPU for audio tokenizer due to embedding operation limitations
+    audio_tokenizer_device = "cpu" if device == "mps" else device
+    audio_tokenizer = load_higgs_audio_tokenizer(audio_tokenizer, device=audio_tokenizer_device)
 
+    # Disable static KV cache on MPS since it relies on CUDA graphs
+    if device == "mps" and use_static_kv_cache:
+        use_static_kv_cache = False
     model_client = HiggsAudioModelClient(
         model_path=model_path,
         audio_tokenizer=audio_tokenizer,
+        device=device,
         device_id=device_id,
         max_new_tokens=max_new_tokens,
         use_static_kv_cache=use_static_kv_cache,
     )
+
     pattern = re.compile(r"\[(SPEAKER\d+)\]")
 
     if os.path.exists(transcript):
@@ -702,7 +751,6 @@ def main(
         scene_prompt = None
 
     speaker_tags = sorted(set(pattern.findall(transcript)))
-
     # Perform some basic normalization
     transcript = normalize_chinese_punctuation(transcript)
     # Other normalizations (e.g., parentheses and other symbols. Will be improved in the future)
@@ -713,7 +761,7 @@ def main(
 
     for tag, replacement in [
         ("[laugh]", "<SE>[Laughter]</SE>"),
-        ("[humming start]", "<SE>[Humming]</SE>"),
+        ("[humming start]", "<SE_s>[Humming]</SE_s>"),
         ("[humming end]", "<SE_e>[Humming]</SE_e>"),
         ("[music start]", "<SE_s>[Music]</SE_s>"),
         ("[music end]", "<SE_e>[Music]</SE_e>"),

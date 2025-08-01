@@ -143,6 +143,21 @@ git clone https://github.com/boson-ai/higgs-audio.git && cd higgs-audio
 pip install -r requirements.txt -e . bitsandbytes
 ```
 
+### Using conda with local environment
+```bash
+git clone https://github.com/boson-ai/higgs-audio.git
+cd higgs-audio
+
+conda create -y --prefix ./conda_env --override-channels --strict-channel-priority --channel "conda-forge" "python==3.10.*"
+conda activate ./conda_env
+pip install -r requirements.txt
+pip install -e .
+
+# Uninstalling environment:
+conda deactivate
+conda remove -y --prefix ./conda_env --all
+```
+
 </details>
 
 ## 🚀 Usage
@@ -359,7 +374,7 @@ python3 examples/generation.py \
 
 Higgs Audio v2 adopts the "generation variant" depicted in the architecture figure above. Its strong performance is driven by three key technical innovations:
 - We developed an automated annotation pipeline that leverages multiple ASR models, sound event classification models, and our in-house audio understanding model. Using this pipeline, we cleaned and annotated 10 million hours audio data, which we refer to as **AudioVerse**. The in-house understanding model is finetuned on top of [Higgs Audio v1 Understanding](https://www.boson.ai/blog/higgs-audio), which adopts the "understanding variant" shown in the architecture figure.
-- We trained a unified audio tokenizer from scratch that captures both semantic and acoustic features. Learn more in the [tokenizer blog](./tech_blogs/TOKENIZER_BLOG.md).
+- We trained a unified audio tokenizer from scratch that captures both semantic and acoustic features. We also open-sourced our evaluation set on [HuggingFace](https://huggingface.co/datasets/bosonai/AudioTokenBench). Learn more in the [tokenizer blog](./tech_blogs/TOKENIZER_BLOG.md).
 - We proposed the DualFFN architecture, which enhances the LLM's ability to model acoustics tokens with minimal computational overhead. See the [architecture blog](./tech_blogs/ARCHITECTURE_BLOG.md).
 
 ## Evaluation
@@ -417,6 +432,20 @@ We report the word-error-rate (WER) and the geometric mean between intra-speaker
 | [nari-labs/Dia-1.6B-0626](https://huggingface.co/nari-labs/Dia-1.6B-0626) | \\-                      | \\-                  | 17.62      | 63.15                | 19.46               | **61.14**            |
 | Higgs Audio v2 (base)                                                     | **18.88**                | **51.95**            | 11.89      | **67.92**            | **14.65**           | 55.28                |
 
+
+## Citation
+
+If you feel the repository is helpful, please kindly cite as:
+
+```
+@misc{higgsaudio2025,
+  author       = {{Boson AI}},
+  title        = {{Higgs Audio V2: Redefining Expressiveness in Audio Generation}},
+  year         = {2025},
+  howpublished = {\url{https://github.com/boson-ai/higgs-audio}},
+  note         = {GitHub repository. Release blog available at \url{https://www.boson.ai/blog/higgs-audio-v2}},
+}
+```
 
 ## Third-Party Licenses
 
